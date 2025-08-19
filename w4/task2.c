@@ -4,11 +4,11 @@
 #include <pthread.h>
 #include <unistd.h>
 
-
 typedef struct
 {
     int lo;
     int hi;
+    int step;
 } PrimeArgs;
 
 typedef struct
@@ -22,18 +22,7 @@ int is_prime(int n);
 
 int main(int argc, char *argv[])
 {
-
-    long num_cores = sysconf(_SC_NPROCESSORS_ONLN);
-    if (num_cores < 1)
-    {
-        printf("Could not determine number of CPU cores.\n");
-    }
-    else
-    {
-        printf("Number of CPU cores: %ld\n", num_cores);
-        
-    }
-    return 0;
+    long num_threads = sysconf(_SC_NPROCESSORS_ONLN);
 
     if (argc != 2)
     {
@@ -41,52 +30,39 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int input = atoi(argv[1]); // convert argument to integer
-    if (input <= 0)
+    int n = atoi(argv[1]); // convert argument to integer
+    if (n <= 0)
     {
         printf("Please enter a positive integer.\n");
         return 1;
     }
 
-    pthread_t thread1;
-    pthread_t thread2;
+    pthread_t thread[num_threads];
+    PrimeArgs args[num_threads];
 
-    int split = input / 2;
-    if (split % 2 == 0)
-        split++;
-
-    PrimeArgs args1 = {2, split};
-    PrimeArgs args2 = {split, input};
-
-    void *void_res1, *void_res2;
-
-    pthread_create(&thread1, NULL, find_primes, (void *)&args1);
-    pthread_create(&thread2, NULL, find_primes, (void *)&args2);
-
-    pthread_join(thread1, &void_res1);
-    pthread_join(thread2, &void_res2);
-
-    PrimeResult *res1 = (PrimeResult *)void_res1;
-    PrimeResult *res2 = (PrimeResult *)void_res2;
-
-    // Now you can safely print only the actual primes:
-    for (int i = 0; i < res1->count; i++)
+    for (int i = 0; i < num_threads; i++)
     {
-        printf("%d ", res1->primes[i]);
-    }
-    printf("\n");
+        args[i].lo = 2 + i;
+        args[i].hi = n;
+        args[i].step = num_threads;
 
-    // Now you can safely print only the actual primes:
-    for (int i = 0; i < res2->count; i++)
+        pthread_create(&thread[i], NULL, find_primes, (void *)&args[i]);
+    }
+
+    void *void_res[num_threads];
+    PrimeResult *res[num_threads];
+
+    for (int i = 0; i < num_threads; i++)
     {
-        printf("%d ", res2->primes[i]);
+        pthread_join(thread[i], &void_res[i]);
+        res[i] = (PrimeResult *)void_res[i];
     }
-    printf("\n");
 
-    free(res1->primes);
-    free(res1);
-    free(res2->primes);
-    free(res2);
+    for (int i = 0; i < num_threads; i++)
+    {
+        free(res[i]->primes); // free the array of primes
+        free(res[i]);         // free the PrimeResult struct
+    }
 
     return 0;
 }
@@ -98,6 +74,7 @@ void *find_primes(void *arg)
 
     int lo = args->lo;
     int hi = args->hi;
+    int step = args->step;
 
     int approx_primes = hi / log(hi) * 2;
     int *res = malloc(approx_primes * sizeof(int));
@@ -116,7 +93,7 @@ void *find_primes(void *arg)
     if (lo % 2 == 0)
         lo++;
 
-    for (int n = lo; n < hi; n += 2)
+    for (int n = lo; n < hi; n += step)
     {
         if (is_prime(n))
             res[counter++] = n;
