@@ -6,7 +6,7 @@ int main(int argc, char *argv[])
 {
     if (argc != 2)
     {
-        printf("Usage: %s <primes less than n>\n", argv[0]);
+        printf("Usage: %s <number of primes>\n", argv[0]);
         return 1;
     }
 
@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
 
     int remainder;
     // Main loop
-    for (int prime = 2, counter = 0, divider = 2, composite = 0; prime < input; prime += 2)
+    for (int prime = 2, counter = 0, divider = 2, composite = 0; counter < input; prime += 2)
     {
         // This offsets the increments, so that it skips every even number after 2, because 2 is the only even prime number
         if (prime == 4)
