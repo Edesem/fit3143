@@ -1,0 +1,5 @@
+It would be set to the value 101, as the variable BValue is
+referencing the AValue, by pointing to the value at that address
+space in the memory, without itself being explicity set.
+Essentially the variable BValue points to the value AValue in the 
+memory.
