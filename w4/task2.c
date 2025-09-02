@@ -58,11 +58,41 @@ int main(int argc, char *argv[])
         res[i] = (PrimeResult *)void_res[i];
     }
 
+    // First, compute total number of primes
+    int total_count = 0;
+    for (int i = 0; i < num_threads; i++)
+        total_count += res[i]->count;
+
+    // Allocate one big array
+    int *all_primes = malloc(total_count * sizeof(int));
+
+    // Copy thread results into it
+    int index = 0;
+    for (int i = 0; i < num_threads; i++)
+    {
+        for (int j = 0; j < res[i]->count; j++)
+        {
+            all_primes[index++] = res[i]->primes[j];
+        }
+    }
+
+    int cmpfunc(const void *a, const void *b)
+    {
+        return (*(int *)a - *(int *)b);
+    }
+
+    qsort(all_primes, total_count, sizeof(int), cmpfunc);
+
+    for (int i = 0; i < total_count; i++)
+        printf("%d ", all_primes[i]);
+    printf("\n");
+
     for (int i = 0; i < num_threads; i++)
     {
         free(res[i]->primes); // free the array of primes
         free(res[i]);         // free the PrimeResult struct
     }
+    free(all_primes);
 
     return 0;
 }
