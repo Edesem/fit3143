@@ -22,7 +22,7 @@ int main(int argc, char **argv)
     MPI_Get_address(&values.a, &disp[0]);
     MPI_Get_address(&values.b, &disp[1]);
 
-    // Make relative
+    // Make relative (address space for a and b)
     disp[1] = disp[1] - disp[0];
     disp[0] = 0;
 
@@ -30,6 +30,7 @@ int main(int argc, char **argv)
     // Please insert one line of code here
     MPI_Type_create_struct(2, blocklen, disp, type, &Valuetype);
 
+    // Ready MPI
     MPI_Type_commit(&Valuetype);
     do
     {
