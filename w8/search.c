@@ -1,9 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <mpi.h>
 
 int main(int argc, char *argv[])
 {
+    MPI_Init(&argc, &argv);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank); // process ID
+    MPI_Comm_size(MPI_COMM_WORLD, &size); // total number of processes
+
     if (argc != 2)
     {
         printf("Usage: %s <number of primes>\n", argv[0]);
