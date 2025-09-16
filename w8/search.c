@@ -3,25 +3,8 @@
 #include <math.h>
 #include <mpi.h>
 
-// Prime checker
-int is_prime(int n) {
-    if (n < 2) return 0;
-    if (n == 2) return 1;
-    if (n % 2 == 0) return 0;
-
-    int sqrt_n = (int)sqrt(n);
-    for (int i = 3; i <= sqrt_n; i += 2) {
-        if (n % i == 0) return 0;
-    }
-    return 1;
-}
-
-// Comparison function for qsort
-int compare_ints(const void *a, const void *b) {
-    int x = *(const int*)a;
-    int y = *(const int*)b;
-    return (x > y) - (x < y);
-}
+int is_prime(int n);
+int compare_ints(const void *a, const void *b);
 
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
@@ -68,14 +51,14 @@ int main(int argc, char *argv[]) {
 
     // Step 2: prepare displacements + gather primes
     int *all_primes = NULL;
-    int *displs = NULL;
+    int *displacements = NULL;
     int total_primes = 0;
 
     if (rank == 0) {
-        displs = malloc(size * sizeof(int));
-        displs[0] = 0;
+        displacements = malloc(size * sizeof(int));
+        displacements[0] = 0;
         for (int i = 1; i < size; i++) {
-            displs[i] = displs[i-1] + recv_counts[i-1];
+            displacements[i] = displacements[i-1] + recv_counts[i-1];
         }
 
         for (int i = 0; i < size; i++) {
@@ -86,7 +69,7 @@ int main(int argc, char *argv[]) {
     }
 
     MPI_Gatherv(local_primes, local_count, MPI_INT,
-                all_primes, recv_counts, displs, MPI_INT,
+                all_primes, recv_counts, displacements, MPI_INT,
                 0, MPI_COMM_WORLD);
 
     // Step 3: root sorts and prints
@@ -99,22 +82,32 @@ int main(int argc, char *argv[]) {
         }
         printf("\n");
 
-        // (Optional) write to file if n is large
-        if (n > 100000) {
-            FILE *f = fopen("primes.txt", "w");
-            for (int i = 0; i < total_primes; i++) {
-                fprintf(f, "%d\n", all_primes[i]);
-            }
-            fclose(f);
-            printf("Primes written to primes.txt\n");
-        }
-
         free(all_primes);
         free(recv_counts);
-        free(displs);
+        free(displacements);
     }
 
     free(local_primes);
     MPI_Finalize();
     return 0;
+}
+
+// Prime checker
+int is_prime(int n) {
+    if (n < 2) return 0;
+    if (n == 2) return 1;
+    if (n % 2 == 0) return 0;
+
+    int sqrt_n = (int)sqrt(n);
+    for (int i = 3; i <= sqrt_n; i += 2) {
+        if (n % i == 0) return 0;
+    }
+    return 1;
+}
+
+// Comparison function for qsort
+int compare_ints(const void *a, const void *b) {
+    int x = *(const int*)a;
+    int y = *(const int*)b;
+    return (x > y) - (x < y);
 }
