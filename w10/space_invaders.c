@@ -1,11 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
+#include <string.h>
 #include <mpi.h>
-#include <unistd.h>  // for sleep()
+#include <stdbool.h>
+#include <unistd.h> // for sleep()
 
-#define TAG_KILL 1
-#define TAG_HIT_PLAYER 2
+#define MSG_NOTHING 0
+#define MSG_KILL    1
+#define MSG_HIT_PLAYER 2
 
 int main(int argc, char **argv)
 {
@@ -26,26 +28,27 @@ int main(int argc, char **argv)
         int remaining_invaders = size - 1;
         while (running)
         {
-            int fired = 1; // always fires
+            int fired = 1; // player always fires each tick
             int msg[3] = {tick, player_col, fired};
 
             // broadcast tick info
             MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
 
-            // probe for events
-            int flag = 0;
-            while (MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status))
+            // receive one message from each invader
+            for (int i = 1; i < size; i++)
             {
-                if (status.MPI_TAG == TAG_KILL)
+                int event;
+                MPI_Recv(&event, 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status);
+
+                if (event == MSG_KILL)
                 {
                     remaining_invaders--;
-                    MPI_Recv(NULL, 0, MPI_INT, status.MPI_SOURCE, TAG_KILL, MPI_COMM_WORLD, &status);
-                    printf("Master: invader killed. Remaining = %d\n", remaining_invaders);
+                    printf("Master: invader %d killed. Remaining = %d\n",
+                           status.MPI_SOURCE, remaining_invaders);
                 }
-                else if (status.MPI_TAG == TAG_HIT_PLAYER)
+                else if (event == MSG_HIT_PLAYER)
                 {
-                    MPI_Recv(NULL, 0, MPI_INT, status.MPI_SOURCE, TAG_HIT_PLAYER, MPI_COMM_WORLD, &status);
-                    printf("Master: player killed!\n");
+                    printf("Master: player killed by invader %d!\n", status.MPI_SOURCE);
                     running = false;
                 }
             }
@@ -69,6 +72,7 @@ int main(int argc, char **argv)
         // INVADER processes
         int msg[3];
         bool alive = true;
+
         while (true)
         {
             MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
@@ -86,12 +90,26 @@ int main(int argc, char **argv)
                 printf("Invader %d received tick %d, player_col=%d, fired=%d\n",
                        rank, tick, player_col, fired);
 
-                // fake death test
+                int event = MSG_NOTHING;
+
+                // fake death test: invader rank 1 dies at tick 5
                 if (tick == 5 && rank == 1)
                 {
-                    MPI_Send(NULL, 0, MPI_INT, 0, TAG_KILL, MPI_COMM_WORLD);
+                    event = MSG_KILL;
                     alive = false;
                 }
+
+                // TODO: implement firing at player with probability
+                // if hit, event = MSG_HIT_PLAYER;
+
+                // send status to master
+                MPI_Send(&event, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+            }
+            else
+            {
+                // already dead, still send "nothing" each tick
+                int event = MSG_NOTHING;
+                MPI_Send(&event, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
             }
         }
     }
