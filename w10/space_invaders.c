@@ -2,55 +2,78 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <mpi.h>
+#include <unistd.h>
 #include <time.h>
 
-#define TAG_KILL 1
-#define TAG_HIT_PLAYER 2
-#define TAG_OK 3
+#define TAG_OK 0
+#define TAG_FIRE 1
 
 #define MAX_ROWS 100
 #define MAX_COLS 100
+#define MAX_BALLS 100
 
 typedef struct
 {
     int col;
+    int row;        // current visual row
+    int target_row; // row it's aiming at
     int remaining_ticks;
     bool active;
+    bool from_player; // true if player shot
 } Cannonball;
 
-// Compute mapping: invader ranks -> (row, col)
+// Map invader rank -> (row, col)
 void get_coords(int rank, int cols, int *row, int *col)
 {
-    int idx = rank - 1; // rank 0 is master
+    int idx = rank - 1;
     *row = idx / cols;
     *col = idx % cols;
 }
 
-void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS], int player_col, Cannonball player_balls[], int pb_count, Cannonball inv_balls[], int ib_count)
+// Print grid with alive invaders and cannonballs
+void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS], int player_col,
+                Cannonball player_balls[], int pb_count,
+                Cannonball inv_balls[], int ib_count)
 {
-    printf("\n--- GAME STATE ---\n");
+    char grid[MAX_ROWS][MAX_COLS];
 
+    // Clear grid
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++)
+            grid[r][c] = alive[r][c] ? 'X' : ' ';
+
+    // Place cannonballs
+    for (int i = 0; i < pb_count; i++)
+    {
+        if (player_balls[i].active)
+        {
+            int r = player_balls[i].row;
+            int c = player_balls[i].col;
+            if (r >= 0 && r < rows)
+                grid[r][c] = '*';
+        }
+    }
+    for (int i = 0; i < ib_count; i++)
+    {
+        if (inv_balls[i].active)
+        {
+            int r = inv_balls[i].row;
+            int c = inv_balls[i].col;
+            if (r >= 0 && r < rows)
+                grid[r][c] = 'o';
+        }
+    }
+
+    // Print rows
+    printf("\n--- GAME STATE ---\n");
     for (int r = 0; r < rows; r++)
     {
         for (int c = 0; c < cols; c++)
-        {
-            char cell = alive[r][c] ? 'X' : ' ';
-            // check if a player cannonball is in this row/column
-            for (int i = 0; i < pb_count; i++)
-            {
-                if (player_balls[i].active)
-                {
-                    int ball_row = rows - 1 - (player_balls[i].remaining_ticks - 2);
-                    if (ball_row == r && player_balls[i].col == c)
-                        cell = '*';
-                }
-            }
-            printf("%c ", cell);
-        }
+            printf("%c ", grid[r][c]);
         printf("\n");
     }
 
-    // print player
+    // Print player row
     for (int c = 0; c < cols; c++)
     {
         if (c == player_col)
@@ -64,8 +87,6 @@ void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS], int player_c
 int main(int argc, char **argv)
 {
     int rank, size;
-    MPI_Status status;
-
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -90,10 +111,6 @@ int main(int argc, char **argv)
 
     srand(time(NULL) + rank);
 
-    int tick = 0;
-    int player_col = 0;
-    bool running = true;
-
     if (rank == 0)
     {
         // MASTER process
@@ -102,13 +119,16 @@ int main(int argc, char **argv)
             for (int c = 0; c < cols; c++)
                 alive[r][c] = true;
 
-        Cannonball player_balls[100];
+        Cannonball player_balls[MAX_BALLS];
         int pb_count = 0;
 
-        Cannonball inv_balls[100];
+        Cannonball inv_balls[MAX_BALLS];
         int ib_count = 0;
 
         int remaining_invaders = rows * cols;
+        int player_col = 0;
+        int tick = 0;
+        bool running = true;
 
         while (running)
         {
@@ -120,21 +140,14 @@ int main(int argc, char **argv)
                 if (!player_balls[i].active)
                     continue;
                 player_balls[i].remaining_ticks--;
+                player_balls[i].row--; // move up
                 if (player_balls[i].remaining_ticks <= 0)
                 {
-                    int r_hit = -1;
-                    for (int r = rows - 1; r >= 0; r--)
-                    {
-                        if (alive[r][player_balls[i].col])
-                        {
-                            r_hit = r;
-                            alive[r][player_balls[i].col] = false;
-                            remaining_invaders--;
-                            printf("[Master] Player killed invader at (%d,%d)\n", r, player_balls[i].col);
-                            break;
-                        }
-                    }
+                    alive[player_balls[i].target_row][player_balls[i].col] = false;
                     player_balls[i].active = false;
+                    remaining_invaders--;
+                    printf("[Master] Player killed invader at (%d,%d)\n",
+                           player_balls[i].target_row, player_balls[i].col);
                 }
             }
 
@@ -144,6 +157,7 @@ int main(int argc, char **argv)
                 if (!inv_balls[i].active)
                     continue;
                 inv_balls[i].remaining_ticks--;
+                inv_balls[i].row++; // move down
                 if (inv_balls[i].remaining_ticks <= 0)
                 {
                     if (inv_balls[i].col == player_col)
@@ -155,26 +169,51 @@ int main(int argc, char **argv)
                 }
             }
 
-            // Broadcast tick info to invaders
-            int fired = 1; // player fires automatically
+            // Broadcast tick info
+            int fired = 1;
             int msg[3] = {tick, player_col, fired};
             MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
 
-            // Receive events from invaders (firing)
+            // Receive firing events from invaders
             for (int i = 1; i < size; i++)
             {
                 int event;
-                MPI_Recv(&event, 1, MPI_INT, i, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+                MPI_Recv(&event, 1, MPI_INT, i, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 if (event > 0)
-                { // invader fired
+                {
+                    // Invader fired: create cannonball
                     inv_balls[ib_count].col = event - 1;
-                    inv_balls[ib_count].remaining_ticks = 2 + (rows - 1); // from bottom-most row
+                    inv_balls[ib_count].row = (event - 1) / cols; // start at invader row
+                    inv_balls[ib_count].target_row = rows - 1;
+                    inv_balls[ib_count].remaining_ticks = 2 + (rows - 1 - inv_balls[ib_count].row);
                     inv_balls[ib_count].active = true;
+                    inv_balls[ib_count].from_player = false;
                     ib_count++;
                 }
             }
 
-            // Visualize grid
+            // Fire player cannonball
+            int target_row = -1;
+            for (int r = rows - 1; r >= 0; r--)
+            {
+                if (alive[r][player_col])
+                {
+                    target_row = r;
+                    break;
+                }
+            }
+            if (target_row >= 0)
+            {
+                player_balls[pb_count].col = player_col;
+                player_balls[pb_count].row = rows; // start visually below invaders
+                player_balls[pb_count].target_row = target_row;
+                player_balls[pb_count].remaining_ticks = 2 + (rows - 1 - target_row);
+                player_balls[pb_count].active = true;
+                player_balls[pb_count].from_player = true;
+                pb_count++;
+            }
+
+            // Print grid
             print_grid(rows, cols, alive, player_col, player_balls, pb_count, inv_balls, ib_count);
 
             if (remaining_invaders == 0)
@@ -185,26 +224,6 @@ int main(int argc, char **argv)
 
             // Move player for demo
             player_col = (player_col + 1) % cols;
-
-            // Fire player cannonball
-            int target_row = -1;
-            for (int r = rows - 1; r >= 0; r--)
-            { // find bottom-most alive invader in column
-                if (alive[r][player_col])
-                {
-                    target_row = r;
-                    break;
-                }
-            }
-
-            if (target_row >= 0)
-            { // only fire if a target exists
-                player_balls[pb_count].col = player_col;
-                player_balls[pb_count].remaining_ticks = 2 + (rows - 1 - target_row); // travel time
-                player_balls[pb_count].active = true;
-                pb_count++;
-            }
-
             tick++;
             sleep(1);
         }
@@ -216,17 +235,17 @@ int main(int argc, char **argv)
     else
     {
         // INVADER process
-        int msg[3];
         int row, col;
         get_coords(rank, cols, &row, &col);
         bool alive = true;
+
+        int msg[3];
 
         while (true)
         {
             MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
             if (msg[0] == -1)
-                break;
-
+                break; // termination
             int tick = msg[0];
             int player_col = msg[1];
             int fired = msg[2];
@@ -239,7 +258,7 @@ int main(int argc, char **argv)
                 double r = (double)rand() / RAND_MAX;
                 if (r < 0.1)
                 {
-                    event_to_send = col + 1; // column of firing
+                    event_to_send = col + 1;
                     printf("[Invader %d] Fires at tick %d (column %d)\n", rank, tick, col);
                 }
             }
