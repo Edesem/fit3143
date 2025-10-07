@@ -15,11 +15,11 @@
 typedef struct
 {
     int col;
-    int row;        // current visual row
-    int target_row; // row it's aiming at
+    int row;
+    int target_row;
     int remaining_ticks;
     bool active;
-    bool from_player; // true if player shot
+    bool from_player;
 } Cannonball;
 
 // Map invader rank -> (row, col)
@@ -30,14 +30,14 @@ void get_coords(int rank, int cols, int *row, int *col)
     *col = idx % cols;
 }
 
-// Print grid with alive invaders and cannonballs
-void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS], int player_col,
-                Cannonball player_balls[], int pb_count,
+// Print grid
+void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS],
+                int player_col, Cannonball player_balls[], int pb_count,
                 Cannonball inv_balls[], int ib_count)
 {
     char grid[MAX_ROWS][MAX_COLS];
 
-    // Clear grid
+    // Fill grid with invaders
     for (int r = 0; r < rows; r++)
         for (int c = 0; c < cols; c++)
             grid[r][c] = alive[r][c] ? 'X' : ' ';
@@ -73,14 +73,9 @@ void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS], int player_c
         printf("\n");
     }
 
-    // Print player row
+    // Print player
     for (int c = 0; c < cols; c++)
-    {
-        if (c == player_col)
-            printf("P ");
-        else
-            printf("  ");
-    }
+        printf("%s", (c == player_col) ? "P " : "  ");
     printf("\n-----------------\n");
 }
 
@@ -113,7 +108,7 @@ int main(int argc, char **argv)
 
     if (rank == 0)
     {
-        // MASTER process
+        // MASTER
         bool alive[MAX_ROWS][MAX_COLS];
         for (int r = 0; r < rows; r++)
             for (int c = 0; c < cols; c++)
@@ -121,7 +116,6 @@ int main(int argc, char **argv)
 
         Cannonball player_balls[MAX_BALLS];
         int pb_count = 0;
-
         Cannonball inv_balls[MAX_BALLS];
         int ib_count = 0;
 
@@ -140,7 +134,7 @@ int main(int argc, char **argv)
                 if (!player_balls[i].active)
                     continue;
                 player_balls[i].remaining_ticks--;
-                player_balls[i].row--; // move up
+                player_balls[i].row--;
                 if (player_balls[i].remaining_ticks <= 0)
                 {
                     alive[player_balls[i].target_row][player_balls[i].col] = false;
@@ -157,7 +151,7 @@ int main(int argc, char **argv)
                 if (!inv_balls[i].active)
                     continue;
                 inv_balls[i].remaining_ticks--;
-                inv_balls[i].row++; // move down
+                inv_balls[i].row++;
                 if (inv_balls[i].remaining_ticks <= 0)
                 {
                     if (inv_balls[i].col == player_col)
@@ -169,10 +163,31 @@ int main(int argc, char **argv)
                 }
             }
 
-            // Broadcast tick info
+            // Compute bottom-most invader per column
+            int bottom_invader[size]; // invader rank allowed to fire per column
+            for (int c = 0; c < cols; c++)
+            {
+                bottom_invader[c] = -1;
+                for (int r = rows - 1; r >= 0; r--)
+                {
+                    if (alive[r][c])
+                    {
+                        bottom_invader[c] = r * cols + c + 1; // rank of bottom-most invader
+                        break;
+                    }
+                }
+            }
+
+            // Broadcast tick info + bottom-most info
             int fired = 1;
-            int msg[3] = {tick, player_col, fired};
-            MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
+            int msg[cols + 3]; // [tick, player_col, fired, bottom-most ranks...]
+            msg[0] = tick;
+            msg[1] = player_col;
+            msg[2] = fired;
+            for (int c = 0; c < cols; c++)
+                msg[3 + c] = bottom_invader[c];
+
+            MPI_Bcast(msg, cols + 3, MPI_INT, 0, MPI_COMM_WORLD);
 
             // Receive firing events from invaders
             for (int i = 1; i < size; i++)
@@ -182,13 +197,22 @@ int main(int argc, char **argv)
                 if (event > 0)
                 {
                     // Invader fired: create cannonball
-                    inv_balls[ib_count].col = event - 1;
-                    inv_balls[ib_count].row = (event - 1) / cols; // start at invader row
-                    inv_balls[ib_count].target_row = rows - 1;
-                    inv_balls[ib_count].remaining_ticks = 2 + (rows - 1 - inv_balls[ib_count].row);
-                    inv_balls[ib_count].active = true;
-                    inv_balls[ib_count].from_player = false;
-                    ib_count++;
+                    int col = event - 1;
+                    // Find row of that invader
+                    int inv_row = -1;
+                    for (int r = 0; r < rows; r++)
+                        if (alive[r][col])
+                            inv_row = r;
+                    if (inv_row >= 0)
+                    {
+                        inv_balls[ib_count].col = col;
+                        inv_balls[ib_count].row = inv_row;
+                        inv_balls[ib_count].target_row = rows - 1;
+                        inv_balls[ib_count].remaining_ticks = 2 + (rows - 1 - inv_row);
+                        inv_balls[ib_count].active = true;
+                        inv_balls[ib_count].from_player = false;
+                        ib_count++;
+                    }
                 }
             }
 
@@ -205,7 +229,7 @@ int main(int argc, char **argv)
             if (target_row >= 0)
             {
                 player_balls[pb_count].col = player_col;
-                player_balls[pb_count].row = rows; // start visually below invaders
+                player_balls[pb_count].row = rows;
                 player_balls[pb_count].target_row = target_row;
                 player_balls[pb_count].remaining_ticks = 2 + (rows - 1 - target_row);
                 player_balls[pb_count].active = true;
@@ -213,7 +237,6 @@ int main(int argc, char **argv)
                 pb_count++;
             }
 
-            // Print grid
             print_grid(rows, cols, alive, player_col, player_balls, pb_count, inv_balls, ib_count);
 
             if (remaining_invaders == 0)
@@ -222,13 +245,11 @@ int main(int argc, char **argv)
                 running = false;
             }
 
-            // Move player for demo
             player_col = (player_col + 1) % cols;
             tick++;
             sleep(1);
         }
 
-        // Terminate invaders
         int term[3] = {-1, -1, -1};
         MPI_Bcast(term, 3, MPI_INT, 0, MPI_COMM_WORLD);
     }
@@ -238,32 +259,28 @@ int main(int argc, char **argv)
         int row, col;
         get_coords(rank, cols, &row, &col);
         bool alive = true;
-
-        int msg[3];
+        int msg[cols + 3];
 
         while (true)
         {
-            MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
+            MPI_Bcast(msg, cols + 3, MPI_INT, 0, MPI_COMM_WORLD);
             if (msg[0] == -1)
-                break; // termination
+                break;
+
             int tick = msg[0];
             int player_col = msg[1];
             int fired = msg[2];
 
-            int event_to_send = 0;
+            int bottom_rank = msg[3 + col]; // master tells bottom-most rank for this column
 
-            // Only bottom-most alive invaders can fire
-            if (alive && tick > 0 && tick % 4 == 0)
+            int event_to_send = 0;
+            if (alive && rank == bottom_rank && tick > 0 && tick % 4 == 0)
             {
                 double r = (double)rand() / RAND_MAX;
                 if (r < 0.1)
-                {
-                    event_to_send = col + 1;
-                    printf("[Invader %d] Fires at tick %d (column %d)\n", rank, tick, col);
-                }
+                    event_to_send = rank; // fire
             }
 
-            // Check if killed by player
             if (alive && fired && player_col == col)
             {
                 alive = false;
