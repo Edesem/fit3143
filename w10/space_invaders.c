@@ -9,6 +9,7 @@
 #define TAG_KILL 1
 #define TAG_HIT_PLAYER 2
 #define TAG_OK 3
+#define TAG_TERMINATE 4
 
 // Compute mapping: invader ranks -> (row, col)
 void get_coords(int rank, int cols, int *row, int *col) {
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    srand(time(NULL) + rank); // each rank gets different seed
+    srand(time(NULL) + rank); // different seed per rank
 
     int tick = 0;
     int player_col = 0;
@@ -52,41 +53,56 @@ int main(int argc, char **argv)
     {
         // MASTER process
         int remaining_invaders = size - 1;
+        bool invader_alive[size];
+        for (int i = 1; i < size; i++) invader_alive[i] = true;
 
         while (running)
         {
-            int fired = 1; // always fires (player logic)
+            int fired = 1; // player always fires
             int msg[3] = {tick, player_col, fired};
+
+            printf("[MASTER] === TICK %d ===\n", tick);
 
             // broadcast tick info
             MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
 
-            printf("[Master] Tick %d broadcast sent (player_col=%d, fired=%d)\n",
-                   tick, player_col, fired);
-
-            // collect heartbeat / event messages from all invaders
+            // simulate player shot: find bottom-most alive in player_col
+            int target = -1;
+            int max_row = -1;
             for (int i = 1; i < size; i++) {
+                if (!invader_alive[i]) continue;
+                int row, col;
+                get_coords(i, cols, &row, &col);
+                if (col == player_col && row > max_row) {
+                    max_row = row;
+                    target = i;
+                }
+            }
+            if (target != -1) {
+                // send kill message to that invader
+                int kill_signal = TAG_KILL;
+                MPI_Send(&kill_signal, 1, MPI_INT, target, TAG_KILL, MPI_COMM_WORLD);
+                invader_alive[target] = false;
+                remaining_invaders--;
+                printf("[MASTER] Player shot kills invader %d at tick %d (row=%d,col=%d). Remaining=%d\n",
+                       target, tick, max_row, player_col, remaining_invaders);
+            }
+
+            // collect one message per invader (OK, HIT_PLAYER, or early death ack)
+            for (int i = 1; i < size; i++) {
+                if (!invader_alive[i]) continue; // dead invaders stop messaging
                 int event;
                 MPI_Recv(&event, 1, MPI_INT, i, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
-                if (event == TAG_KILL) {
-                    remaining_invaders--;
-                    printf("[Master] Tick %d: Invader %d killed. Remaining=%d\n",
-                           tick, status.MPI_SOURCE, remaining_invaders);
-                }
-                else if (event == TAG_HIT_PLAYER) {
-                    printf("[Master] Tick %d: Player killed by invader %d!\n",
-                           tick, status.MPI_SOURCE);
+                if (event == TAG_HIT_PLAYER) {
+                    printf("[MASTER] Player killed by invader %d at tick %d!\n", i, tick);
                     running = false;
                 }
-                else if (event == TAG_OK) {
-                    printf("[Master] Tick %d: Invader %d reports OK\n",
-                           tick, status.MPI_SOURCE);
-                }
+                // TAG_OK = heartbeat, nothing special
             }
 
             if (remaining_invaders == 0) {
-                printf("[Master] Player wins!\n");
+                printf("[MASTER] Player wins!\n");
                 running = false;
             }
 
@@ -108,7 +124,7 @@ int main(int argc, char **argv)
 
         int scheduled_hit_tick = -1; // when cannonball hits player
 
-        while (alive)
+        while (true)
         {
             MPI_Bcast(msg, 3, MPI_INT, 0, MPI_COMM_WORLD);
 
@@ -119,30 +135,40 @@ int main(int argc, char **argv)
             int player_col = msg[1];
             int fired = msg[2];
 
-            printf("[Invader %d] Tick %d received (player_col=%d, fired=%d)\n",
-                   rank, tick, player_col, fired);
+            if (!alive) continue; // dead invaders ignore ticks
+
+            printf("[INVADER %d] Tick %d (row=%d,col=%d) player_col=%d fired=%d\n",
+                   rank, tick, row, col, player_col, fired);
+
+            // check if master killed me this tick
+            int flag;
+            MPI_Iprobe(0, TAG_KILL, MPI_COMM_WORLD, &flag, &status);
+            if (flag) {
+                int dummy;
+                MPI_Recv(&dummy, 1, MPI_INT, 0, TAG_KILL, MPI_COMM_WORLD, &status);
+                alive = false;
+                printf("[INVADER %d] I was killed at tick %d!\n", rank, tick);
+                continue;
+            }
 
             // process pending scheduled shot
             if (scheduled_hit_tick == tick) {
-                // send hit event to master
                 int event = TAG_HIT_PLAYER;
                 MPI_Send(&event, 1, MPI_INT, 0, TAG_HIT_PLAYER, MPI_COMM_WORLD);
-                printf("[Invader %d] Hit the player at tick %d!\n", rank, tick);
+                printf("[INVADER %d] Hit the player at tick %d!\n", rank, tick);
                 scheduled_hit_tick = -1;
-            }
-            else {
-                // decide to fire every 4 ticks
-                if (alive && tick > 0 && tick % 4 == 0) {
+            } else {
+                // maybe fire every 4 ticks
+                if (tick > 0 && tick % 4 == 0) {
                     double r = (double) rand() / RAND_MAX;
                     if (r < 0.1) { // 10% chance
-                        int travel = 2 + (rows - row - 1); // bottom row travel=2
+                        int travel = 2 + (rows - row - 1);
                         scheduled_hit_tick = tick + travel;
-                        printf("[Invader %d] Fires at tick %d (will hit at %d)\n",
+                        printf("[INVADER %d] Fires at tick %d (will hit at %d)\n",
                                rank, tick, scheduled_hit_tick);
                     }
                 }
-
-                // nothing happened → send heartbeat
+                // send heartbeat
                 int event = TAG_OK;
                 MPI_Send(&event, 1, MPI_INT, 0, TAG_OK, MPI_COMM_WORLD);
             }
