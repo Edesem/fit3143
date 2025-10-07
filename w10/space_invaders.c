@@ -28,36 +28,37 @@ void get_coords(int rank, int cols, int *row, int *col)
 
 void print_grid(int rows, int cols, bool alive[MAX_ROWS][MAX_COLS], int player_col, Cannonball player_balls[], int pb_count, Cannonball inv_balls[], int ib_count)
 {
+    printf("\n--- GAME STATE ---\n");
+
     for (int r = 0; r < rows; r++)
     {
         for (int c = 0; c < cols; c++)
         {
-            bool ball_here = false;
-            for (int i = 0; i < ib_count; i++)
+            char cell = alive[r][c] ? 'X' : ' ';
+            // check if a player cannonball is in this row/column
+            for (int i = 0; i < pb_count; i++)
             {
-                if (inv_balls[i].active && inv_balls[i].col == c && inv_balls[i].remaining_ticks == 0 && r == rows - 1)
+                if (player_balls[i].active)
                 {
-                    ball_here = true;
+                    int ball_row = rows - 1 - (player_balls[i].remaining_ticks - 2);
+                    if (ball_row == r && player_balls[i].col == c)
+                        cell = '*';
                 }
             }
-            if (!alive[r][c])
-                printf(".");
-            else if (ball_here)
-                printf("*");
-            else
-                printf("I");
+            printf("%c ", cell);
         }
         printf("\n");
     }
+
     // print player
     for (int c = 0; c < cols; c++)
     {
         if (c == player_col)
-            printf("P");
+            printf("P ");
         else
-            printf(" ");
+            printf("  ");
     }
-    printf("\n");
+    printf("\n-----------------\n");
 }
 
 int main(int argc, char **argv)
