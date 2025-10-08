@@ -291,6 +291,29 @@ int main(int argc, char **argv)
                 msg[3 + c] = bottom_rank;
             }
 
+            // HD task 2
+            if (tick % 5 == 0)
+            { // every 5 ticks (≈5 seconds with sleep(1))
+                for (int r = 0; r < rows; r++)
+                {
+                    for (int c = 0; c < cols; c++)
+                    {
+                        if (!alive[r][c])
+                        {
+                            if (c > 0 && c < cols - 1 && alive[r][c - 1] && alive[r][c + 1])
+                            {
+                                if ((double)rand() / RAND_MAX < 0.2)
+                                {
+                                    alive[r][c] = true;
+                                    remaining_invaders++;
+                                    printf("[Master] Invader reborn at (%d,%d)\n", r, c);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // broadcast tick + bottom-most info
             MPI_Bcast(msg, msg_len, MPI_INT, 0, MPI_COMM_WORLD);
 
