@@ -335,6 +335,7 @@ int main(int argc, char **argv)
                             break;
                         }
                     }
+
                     if (inv_row >= 0)
                     {
                         if (ib_count < MAX_BALLS)
@@ -352,6 +353,7 @@ int main(int argc, char **argv)
                             // drop shot if array full
                         }
                     }
+
                     else
                     {
                         // no alive invader in column (shouldn't happen if master allowed firing)
